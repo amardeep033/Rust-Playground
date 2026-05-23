@@ -14,6 +14,7 @@ Small Rust experiments collected in one repository. Each top-level folder is an 
 - `plots` - Simple plotting examples using Plotters and Textplots.
 - `race` - Small Tokio timeout and channel selection example.
 - `ratatui` - Terminal UI playground built with Ratatui and Sysinfo.
+- `rust-basics` - Runnable examples for ownership, borrowing, lifetimes, `Rc`, `Box`, and strings.
 - `rss` - Memory allocation test utility for observing resource usage over time.
 - `sorting` - Large in-memory sorting and range-query experiment.
 - `webhook-listner` - Basic Actix Web webhook receiver for inspecting incoming requests.
