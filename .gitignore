@@ -1,0 +1,14 @@
+**/target/
+
+# Rust and editor noise
+**/*.rs.bk
+.DS_Store
+
+# Local outputs from experiments
+*.log
+*.out
+*.profraw
+*.svg
+perf.data
+perf.data.old
+output.png

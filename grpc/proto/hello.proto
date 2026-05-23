@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package hello;
+
+import "google/protobuf/field_mask.proto";
+
+service Greeter {
+  rpc UpdateUser (UpdateUserRequest) returns (User);
+}
+
+message User {
+  int32 id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message UpdateUserRequest {
+  User user = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}

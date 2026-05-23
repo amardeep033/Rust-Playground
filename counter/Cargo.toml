@@ -1,0 +1,10 @@
+[package]
+name = "counter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4"
+prometheus = "0.13"
+lazy_static = "1"
+rand = "0.10.0"

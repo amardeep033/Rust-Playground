@@ -1,0 +1,297 @@
+use mio::{Events, Interest, Poll, Token};
+use mio::net::{TcpListener, TcpStream};
+
+use crossbeam_channel::{unbounded, Receiver, Sender};
+
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    net::SocketAddr,
+    thread,
+};
+
+/// ================= Commands & Responses =================
+
+#[derive(Debug)]
+enum Command {
+    Set {
+        key: String,
+        value: String,
+        token: Token,
+    },
+    Get {
+        key: String,
+        token: Token,
+    },
+}
+
+#[derive(Debug)]
+enum Response {
+    Write {
+        token: Token,
+        data: Vec<u8>,
+    },
+}
+
+/// ================= CPU pinning =================
+
+fn pin_thread_to_core(core_id: usize) {
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_ZERO(&mut set);
+        libc::CPU_SET(core_id, &mut set);
+        libc::sched_setaffinity(
+            0,
+            std::mem::size_of::<libc::cpu_set_t>(),
+            &set,
+        );
+    }
+}
+
+/// ================= Shard worker =================
+
+fn shard_worker(
+    shard_id: usize,
+    rx: Receiver<Command>,
+    resp_tx: Sender<Response>,
+) {
+    pin_thread_to_core(shard_id);
+
+    let mut store = HashMap::<String, String>::new();
+    println!("Shard {} running on pinned core", shard_id);
+
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            Command::Set { key, value, token } => {
+                store.insert(key, value);
+                resp_tx
+                    .send(Response::Write {
+                        token,
+                        data: b"+OK\r\n".to_vec(),
+                    })
+                    .unwrap();
+            }
+
+            Command::Get { key, token } => {
+                let resp = match store.get(&key) {
+                    Some(v) => format!("${}\r\n{}\r\n", v.len(), v),
+                    None => "$-1\r\n".to_string(),
+                };
+
+                resp_tx
+                    .send(Response::Write {
+                        token,
+                        data: resp.into_bytes(),
+                    })
+                    .unwrap();
+            }
+        }
+    }
+}
+
+/// ================= Sharding =================
+
+fn shard_for_key(key: &str, shard_count: usize) -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    (h.finish() as usize) % shard_count
+}
+
+/// ================= Connection =================
+
+struct Connection {
+    stream: TcpStream,
+    read_buf: Vec<u8>,
+    write_buf: Vec<u8>,
+}
+
+/// ================= Tokens =================
+
+const LISTENER: Token = Token(0);
+
+fn main() -> std::io::Result<()> {
+    const SHARDS: usize = 4;
+
+    /// ---------- Channels ----------
+    let mut shard_senders: Vec<Sender<Command>> = Vec::new();
+    let (resp_tx, resp_rx) = unbounded::<Response>();
+
+    /// ---------- Spawn shards ----------
+    for shard_id in 0..SHARDS {
+        let (tx, rx) = unbounded();
+        shard_senders.push(tx);
+
+        let resp_tx_clone = resp_tx.clone();
+        thread::spawn(move || shard_worker(shard_id, rx, resp_tx_clone));
+    }
+
+    /// ---------- mio setup ----------
+    let mut poll = Poll::new()?;
+    let mut events = Events::with_capacity(128);
+
+    let addr: SocketAddr = "127.0.0.1:6379".parse().unwrap();
+    let mut listener = TcpListener::bind(addr)?;
+
+    poll.registry()
+        .register(&mut listener, LISTENER, Interest::READABLE)?;
+
+    println!("Listening on {}", addr);
+
+    let mut connections: HashMap<Token, Connection> = HashMap::new();
+    let mut next_token_id: usize = 1;
+
+    /// ================= Event loop =================
+    loop {
+        /// ---- Handle shard responses ----
+        while let Ok(resp) = resp_rx.try_recv() {
+            if let Response::Write { token, data } = resp {
+                if let Some(conn) = connections.get_mut(&token) {
+                    conn.write_buf.extend_from_slice(&data);
+
+                    poll.registry().reregister(
+                        &mut conn.stream,
+                        token,
+                        Interest::READABLE | Interest::WRITABLE,
+                    )?;
+                }
+            }
+        }
+
+        poll.poll(&mut events, None)?;
+
+        for event in events.iter() {
+            match event.token() {
+                LISTENER => {
+                    /// ---- Accept loop ----
+                    loop {
+                        match listener.accept() {
+                            Ok((mut stream, peer)) => {
+                                let token = Token(next_token_id);
+                                next_token_id += 1;
+
+                                poll.registry().register(
+                                    &mut stream,
+                                    token,
+                                    Interest::READABLE,
+                                )?;
+
+                                connections.insert(
+                                    token,
+                                    Connection {
+                                        stream,
+                                        read_buf: Vec::with_capacity(1024),
+                                        write_buf: Vec::with_capacity(1024),
+                                    },
+                                );
+
+                                println!("Accepted {}", peer);
+                            }
+                            Err(ref e)
+                                if e.kind() == std::io::ErrorKind::WouldBlock =>
+                            {
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+
+                token => {
+                    let mut close_conn = false;
+
+                    if let Some(conn) = connections.get_mut(&token) {
+                        /// ---- READ ----
+                        if event.is_readable() {
+                            let mut buf = [0u8; 512];
+                            loop {
+                                match conn.stream.read(&mut buf) {
+                                    Ok(0) => {
+                                        close_conn = true;
+                                        break;
+                                    }
+                                    Ok(n) => {
+                                        conn.read_buf.extend_from_slice(&buf[..n]);
+
+                                        while let Some(pos) =
+                                            conn.read_buf.iter().position(|&b| b == b'\n')
+                                        {
+                                            let line =
+                                                conn.read_buf.drain(..=pos).collect::<Vec<_>>();
+                                            let msg =
+                                                String::from_utf8_lossy(&line).trim().to_string();
+
+                                            let parts: Vec<_> =
+                                                msg.split_whitespace().collect();
+
+                                            match parts.as_slice() {
+                                                ["SET", key, value] => {
+                                                    let shard =
+                                                        shard_for_key(key, SHARDS);
+                                                    shard_senders[shard]
+                                                        .send(Command::Set {
+                                                            key: key.to_string(),
+                                                            value: value.to_string(),
+                                                            token,
+                                                        })
+                                                        .unwrap();
+                                                }
+                                                ["GET", key] => {
+                                                    let shard =
+                                                        shard_for_key(key, SHARDS);
+                                                    shard_senders[shard]
+                                                        .send(Command::Get {
+                                                            key: key.to_string(),
+                                                            token,
+                                                        })
+                                                        .unwrap();
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    Err(ref e)
+                                        if e.kind()
+                                            == std::io::ErrorKind::WouldBlock =>
+                                    {
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        close_conn = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        /// ---- WRITE ----
+                        if event.is_writable() && !conn.write_buf.is_empty() {
+                            match conn.stream.write(&conn.write_buf) {
+                                Ok(n) => {
+                                    conn.write_buf.drain(..n);
+                                }
+                                Err(ref e)
+                                    if e.kind()
+                                        == std::io::ErrorKind::WouldBlock =>
+                                {}
+                                Err(_) => close_conn = true,
+                            }
+
+                            if conn.write_buf.is_empty() {
+                                poll.registry().reregister(
+                                    &mut conn.stream,
+                                    token,
+                                    Interest::READABLE,
+                                )?;
+                            }
+                        }
+                    }
+
+                    if close_conn {
+                        connections.remove(&token);
+                    }
+                }
+            }
+        }
+    }
+}
