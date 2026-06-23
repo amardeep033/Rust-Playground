@@ -1,9 +1,0 @@
-old
-{"EventId":"Load","JobInstanceId":"27d79ad4-bcc3-4996-b8fe-f510969111cb","busy_ns":"100887","code.filepath":"src/otel.rs","code.lineno":"27","code.namespace":"ingestion_peo::otel","file_path":"File { fd: 9, path: \"/home/surya/Ingestion/logs/log_27d79ad4-bcc3-4996-b8fe-f510969111cb.txt\", read: false, write: true }","fn_name":"main","idle_ns":"58455","job_execution_event":"true","level":"Information","message":"Loaded 2.0 records","mod_path":"ingestion_peo","thread.id":"1","thread.name":"main"}
-
-
-new
-{"EventId":"Load","JobInstanceId":"d5bc309d-b5c4-4bfe-a67c-600999eed528","args":"","busy_ns":"237091","code.filepath":"/home/surya/Ingestion/dh_logger_service/src/lib.rs","code.lineno":"132","code.namespace":"dh_logger_service","fn_name":"main","idle_ns":"31708","job_execution_event":"true","level":"Information","message":"Loaded 2.0 records","mod_path":"ingestion_peo","thread.id":"1","thread.name":"main"}
-
-test
-{"EventId":"Load","JobInstanceId":"87cd2f69-8889-4ff7-a29a-ecc5a13a38e5","args":"","busy_ns":"20346","code.filepath":"/home/surya/Ingestion/dh_logger_service/src/lib.rs","code.lineno":"146","code.namespace":"dh_logger_service","fn_name":"stream_file","idle_ns":"27445","job_execution_event":"true","level":"Information","message":"Successfully read rows = 2","mod_path":"ingestion_peo::helper_methods::stream_file","thread.id":"1","thread.name":"main"}
