@@ -1,0 +1,3 @@
+2024-01-01T10:00:01,started service A
+2024-01-01T10:00:10,heartbeat A
+2024-01-01T10:00:30,shutdown A

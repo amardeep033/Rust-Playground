@@ -1,0 +1,13 @@
+[
+    {
+        "type": "email",
+        "to": "alice@example.com",
+        "subject": "Welcome"
+    },
+    {
+        "type": "push",
+        "device_id": "device-123",
+        "title": "Sale!",
+        "body": "50% OFF"
+    }
+]
