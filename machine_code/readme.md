@@ -22,3 +22,7 @@
 | 6_concurrent_service_counter | shared mutable state across async tasks |
 | 7_async_pipeline_channels | multi-stage async pipeline via channels |
 | 8_book_scraper_server | actix-web service + live scraping (reqwest) |
+
+## Next In Line
+| 9_datafusion_impl | datafusion |
+| 10_opentel | opentelemetry |
