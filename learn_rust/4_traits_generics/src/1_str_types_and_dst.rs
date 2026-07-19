@@ -1,35 +1,33 @@
-// Q: str vs &str vs String? And why can't `let s: str = ...` live on the stack?
+// Q: Predict — `greet` takes `&String`. Which of these three calls fails to compile, and
+//    would switching the param to `&str` fix it?
 
-use std::fmt::Display;
-
-fn print_it(s: &str) {
-    println!("{s}");
+fn greet(s: &str) {
+    // vs `s: &String`
+    println!("hi {s}");
 }
 
 fn main() {
-    let owned: String = String::from("hello");
-    let borrowed: &str = &owned;
-    let slice: &str = &owned[1..3];
-    println!("{owned} {borrowed} {slice}");
+    let owned = String::from("Amar");
+    greet(&owned); // works either way
+    greet("literal"); // ❌ if param is &String (a literal is &str, not &String) — ✅ with &str
+    greet(&owned[0..2]); // ❌ if param is &String (a slice is &str) — ✅ with &str
 
-    print_it("literal");
-    print_it(&owned);
-
-    let d: &dyn Display = &42;
-    let b: Box<dyn Display> = Box::new(42);
-    println!("{d} {b}");
+    // the three string forms:
+    let s: String = String::from("hello"); // (ptr,len,cap) owns heap
+    let borrowed: &str = &s; // (ptr,len) borrows s
+    let slice: &str = &s[1..3]; // "el" — a view, no copy
+    println!("{s} {borrowed} {slice}");
 }
 
-// A: String = (ptr,len,cap) owning a growable heap buffer. &str = a fat pointer
-//    (ptr,len) borrowing UTF-8 it doesn't own, immutable. str is the bare text — a
-//    Dynamically Sized Type whose size is unknown at compile time, so it can't sit on
-//    the stack; it only exists behind a pointer (&str, Box<str>).
+// A: With `&String`, BOTH the literal and the slice calls fail — a literal and a slice are
+//    `&str`, not `&String`. Switching the param to `&str` fixes all of them, because
+//    `&String` auto-coerces to `&str` (Deref) but not vice-versa. So `&str` params accept
+//    strictly more callers. Taking `&String` is a common beginner over-restriction.
 //
 // ── more Q&A ──
-// Q: What are the three DSTs?
-// A: str, [T] (slice), and dyn Trait — all unsized, all used behind a pointer.
-// Q: Why take `&str` instead of `&String` as a parameter?
-// A: &str accepts more callers: string literals, &String (via Deref coercion), and
-//    slices. &String only accepts a String.
-// Q: Memory layout of &str vs String?
-// A: &str = (ptr, len) — 2 words. String = (ptr, len, cap) — 3 words, owns the heap.
+// Q: Why can't `str` (bare, no `&`) be a local variable?
+// A: `str` is a DST — its size isn't known at compile time (text can be any length), so it
+//    can't sit on the stack. It only exists behind a pointer: `&str`, `Box<str>`.
+// Q: What are the three DSTs, and what do they have in common?
+// A: `str`, `[T]` (slice), `dyn Trait`. All unsized → all used behind a pointer (`&`/`Box`/
+//    `Rc`), and that pointer is "fat" (carries a length or a vtable alongside the address).

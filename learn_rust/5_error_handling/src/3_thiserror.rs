@@ -1,5 +1,6 @@
-// Q: How do you define typed errors a caller can match on, and what does `#[from]`
-//    buy you?
+// Q: The caller needs to react differently to "not found" vs "bad input". Predict — why
+//    is `Box<dyn Error>` a bad fit here, and what does `#[from]` do that saves you a
+//    `map_err`?
 
 use thiserror::Error;
 
@@ -10,7 +11,7 @@ enum AppError {
     #[error("permission denied")]
     Unauthorized,
     #[error("bad number: {0}")]
-    Parse(#[from] std::num::ParseIntError),
+    Parse(#[from] std::num::ParseIntError), // #[from] auto-generates From<ParseIntError>
 }
 
 fn find_user(id: u32) -> Result<String, AppError> {
@@ -22,7 +23,7 @@ fn find_user(id: u32) -> Result<String, AppError> {
 }
 
 fn parse_id(s: &str) -> Result<String, AppError> {
-    let id: u32 = s.parse()?;
+    let id: u32 = s.parse()?; // #[from] lets `?` convert ParseIntError → AppError::Parse automatically
     find_user(id)
 }
 
@@ -30,19 +31,23 @@ fn main() {
     for input in ["1", "0", "99", "abc"] {
         match parse_id(input) {
             Ok(name) => println!("{input}: {name}"),
-            Err(AppError::NotFound(id)) => println!("{input}: no user {id}"),
+            Err(AppError::NotFound(id)) => println!("{input}: no user {id}"), // caller MATCHES the variant
             Err(e) => println!("{input}: {e}"),
         }
     }
 }
 
-// A: `#[derive(Error)]` builds a typed enum whose `#[error("..")]` strings become the
-//    Display impl, and callers can `match` on individual variants. `#[from]` generates
-//    `From<ParseIntError>`, so `?` auto-converts the source error into AppError::Parse.
+// A: `Box<dyn Error>` erases the type, so the caller can't cleanly `match` on the cause.
+//    A typed enum keeps each failure as a named variant the caller can pattern-match.
+//    `#[from]` generates `From<ParseIntError> for AppError`, so `?` converts the source
+//    error into `AppError::Parse` automatically — without it you'd write
+//    `.map_err(AppError::Parse)?` by hand on every call. This is the LIBRARY style.
 //
 // ── more Q&A ──
-// Q: thiserror vs anyhow — when each?
-// A: thiserror for LIBRARIES (typed variants callers match on); anyhow for
-//    APPLICATIONS (one dynamic error you just surface).
-// Q: What does the `#[error("..")]` attribute generate?
-// A: The `Display` implementation for that variant — the message shown by `{}`.
+// Q: What does `#[error("..")]` actually generate?
+// A: The `Display` impl for that variant — the message printed by `{}`. `#[derive(Error)]`
+//    also wires up the `Error` trait (and `source()` for `#[from]` fields).
+// Q: thiserror or anyhow — how do you choose in one sentence?
+// A: Writing a LIBRARY whose callers branch on errors → thiserror (typed). Writing an
+//    APP that just logs/propagates → anyhow (dynamic). They compose: libs export thiserror
+//    enums, the app collects them with anyhow.

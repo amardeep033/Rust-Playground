@@ -1,7 +1,7 @@
-// Q: join! vs select!? And how does a bounded channel create backpressure?
+// Q: Two tasks take 80ms and 50ms. Predict — `join!(a, b)` total time: ~130ms (sum) or
+//    ~80ms (max)? And what happens to the SLOWER future in a `select!`?
 
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 async fn work(name: &str, ms: u64) -> String {
     tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -10,45 +10,26 @@ async fn work(name: &str, ms: u64) -> String {
 
 #[tokio::main]
 async fn main() {
-    let (a, b) = tokio::join!(work("a", 80), work("b", 50));
-    println!("{a}, {b}");
+    let (a, b) = tokio::join!(work("a", 80), work("b", 50)); // both run concurrently
+    println!("{a}, {b}"); // ~80ms total, not 130ms
 
     tokio::select! {
-        r = work("fast", 30) => println!("{r}"),
-        r = work("slow", 90) => println!("{r}"),
+        r = work("fast", 30) => println!("winner: {r}"), // first to finish wins...
+        r = work("slow", 90) => println!("winner: {r}"), // ...the slow one is CANCELLED
     }
-
-    let (tx, mut rx) = mpsc::channel::<i32>(2);
-    let producer = tokio::spawn(async move {
-        for i in 1..=5 {
-            tx.send(i).await.unwrap();
-            println!("sent {i}");
-        }
-    });
-    while let Some(v) = rx.recv().await {
-        println!("  got {v}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    producer.await.unwrap();
 }
 
-// A: join! runs all its futures concurrently and waits for ALL (total time ≈ the
-//    slowest). select! waits for the FIRST to finish and cancels the rest. A bounded
-//    channel (capacity 2) applies backpressure: once the buffer is full, send().await
-//    SUSPENDS the producer until the slow consumer drains an item.
+// A: `join!` = ~80ms (the MAX), because the two futures run concurrently and overlap their
+//    waits — not 130ms (that would be awaiting them one after another). `select!` returns as
+//    soon as the FIRST future completes and CANCELS the rest (drops them at their suspension
+//    point) — here "fast" wins at 30ms and "slow" never finishes. Great for timeouts / "first
+//    response wins".
 //
 // ── more Q&A ──
-// Q: With join!, is total time the sum or the max of the futures?
-// A: Roughly the MAX — they run concurrently, overlapping their waits.
-// Q: What happens to the losing futures in select!?
-// A: They're dropped/cancelled at the point they were suspended. Useful for timeouts and
-//    "first response wins".
-// Q: join! vs tokio::spawn — difference?
-// A: join! runs futures on the CURRENT task concurrently; spawn hands a task to the
-//    runtime to run independently (and it must be Send + 'static).
-// Q: What capacity should the bounded channel have for backpressure — how do you decide?
-// A: There's no magic number; size it to how much in-flight work you can tolerate.
-//    Small (1–few) = tight backpressure, low memory, producer paced closely to the
-//    consumer. Larger = absorbs bursts but uses more memory and hides a slow consumer.
-//    Rule of thumb: start small, raise only if the producer stalls on natural bursts;
-//    capacity ≈ (peak burst size) or (consumer throughput × acceptable latency).
+// Q: `join!` vs `tokio::spawn` — both run things concurrently, so what's the difference?
+// A: `join!` drives futures concurrently ON THE CURRENT task (same thread, no Send needed).
+//    `spawn` hands a task to the runtime to run INDEPENDENTLY (any worker thread, must be
+//    Send + 'static). Use join! for "wait for these N together"; spawn for fire-and-track.
+// Q: Is cancelling the slow future in select! safe — could it leave things half-done?
+// A: The future is dropped at its last `.await`; its Drop impls run, but any work past that
+//    await never happens. Don't rely on a select!-losable future to finish side effects.

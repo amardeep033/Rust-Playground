@@ -1,40 +1,31 @@
-// Q: You need shared ownership AND mutation in a single thread — what combo, and
-//    when does it blow up?
+// Q: Predict — holding `shared.borrow()` and then calling `shared.borrow_mut()` on a
+//    RefCell. Does it (a) fail to compile, or (b) compile and panic at runtime?
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 fn main() {
-    let shared = Rc::new(RefCell::new(0));
+    let shared = Rc::new(RefCell::new(0)); // Rc = many owners (1 thread); RefCell = mutate via shared &
 
     let a = Rc::clone(&shared);
     let b = Rc::clone(&shared);
     *a.borrow_mut() += 10;
     *b.borrow_mut() += 5;
-
-    println!("count={} value={}", Rc::strong_count(&shared), shared.borrow());
+    println!("owners={} value={}", Rc::strong_count(&shared), shared.borrow()); // owners=3 value=15
 
     // let r = shared.borrow();
-    // let w = shared.borrow_mut(); // compiles, but PANICS: already borrowed
+    // let w = shared.borrow_mut(); // ← COMPILES, but PANICS at runtime: "already borrowed"
 }
 
-// A: Rc<RefCell<T>>. Rc gives multiple owners via a (non-atomic) reference count;
-//    RefCell gives interior mutability — mutating through a shared &. Its borrow rules
-//    are checked at RUNTIME, so overlapping borrow()/borrow_mut() COMPILES but panics.
+// A: (b) It COMPILES and PANICS at runtime ("already mutably/immutably borrowed"). RefCell
+//    moves the borrow check from COMPILE time to RUN time — the same &/&mut aliasing rule, just
+//    enforced by a runtime flag instead of the compiler. The trap: it looks fine until it
+//    explodes on a code path you didn't test. A plain `&`/`&mut` version would fail to compile instead.
 //
 // ── more Q&A ──
-// Q: Rc vs Arc?
-// A: Rc uses a non-atomic refcount (single thread, faster); Arc uses an atomic refcount
-//    (safe across threads). Rc is the multi-thread combo's Arc<Mutex<T>>.
-// Q: When are RefCell's borrow rules checked?
-// A: At RUNTIME (not compile time) — a violated borrow panics instead of failing to compile.
-// Q: Why isn't Rc Send?
-// A: Its refcount isn't atomic; two threads cloning/dropping could corrupt the count —
-//    a data race — so the compiler forbids sending Rc across threads.
-// Q: Will this compile, and what happens at run time?
-//        let r = shared.borrow();
-//        let w = shared.borrow_mut(); // ???
-//    A: It COMPILES (RefCell defers borrow checking to run time) but PANICS at run time:
-//    "already borrowed" — you're holding a shared borrow and asking for a mutable one.
-//    Fix: drop `r` first, or don't overlap the borrows. (A plain `&`/`&mut` version of
-//    this would instead be a compile error.)
+// Q: Rc vs Arc — why not just always use Arc?
+// A: Rc's refcount is non-atomic (cheaper) but single-thread-only; Arc's is atomic (thread-safe)
+//    but slightly costlier. Use Rc within one thread; Arc across threads. Rc isn't `Send`.
+// Q: What's the multi-threaded equivalent of `Rc<RefCell<T>>`?
+// A: `Arc<Mutex<T>>` (or `Arc<RwLock<T>>`) — shared ownership + synchronized mutation, but the
+//    Mutex checks are enforced by blocking/locking rather than a panic.

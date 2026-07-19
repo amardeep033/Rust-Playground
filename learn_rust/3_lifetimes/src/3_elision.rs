@@ -1,37 +1,38 @@
-// Q: When can you omit lifetime annotations entirely? Name the rules.
+// Q: Predict — `first_word` needs NO lifetime annotation, but `pick` (same shape of body)
+//    won't compile without one. What's different?
 
 fn first_word(s: &str) -> &str {
-    s.split(' ').next().unwrap()
+    s.split(' ').next().unwrap() // ✅ one input ref → output borrows it (elision rule 2)
 }
+
+// fn pick(a: &str, b: &str) -> &str {
+//     a // ❌ E0106: TWO input refs — compiler can't guess which one the output ties to
+// }
 
 struct Parser<'a> {
     input: &'a str,
 }
-
 impl<'a> Parser<'a> {
     fn rest(&self) -> &str {
-        self.input
+        self.input // ✅ &self present → output borrows self (elision rule 3), no 'a needed
     }
-}
-
-fn combine(a: &str, b: &str) -> String {
-    format!("{a}{b}")
 }
 
 fn main() {
     println!("{}", first_word("hello world"));
     println!("{}", Parser { input: "config data" }.rest());
-    println!("{}", combine("foo", "bar"));
 }
 
-// A: Three elision rules: (1) each &param gets its own lifetime; (2) with exactly one
-//    input lifetime it's used for all outputs (so first_word needs none); (3) if
-//    &self/&mut self is present, its lifetime goes to the outputs (so rest() needs none).
+// A: Elision rules fill in lifetimes for common shapes: (2) exactly ONE input ref → its
+//    lifetime goes to the output, so `first_word` is unambiguous. `pick` has TWO input
+//    refs and no `&self`, so the compiler can't decide which the output ties to → you
+//    must write `<'a>`. (3) `&self` always wins, which is why methods rarely need `'a`.
 //
 // ── more Q&A ──
-// Q: Why does one input ref elide but two don't?
-// A: Rule 2 only applies with a SINGLE input lifetime. With two, the compiler can't
-//    guess which one the output ties to → you must annotate.
-// Q: What is `'static`?
-// A: A lifetime lasting the whole program (e.g. string literals). It's a real bound,
-//    not a fix-all — slapping it on to silence an error usually just hides the real one.
+// Q: So how do I quickly tell if a signature needs an explicit lifetime?
+// A: Count input references that could be the output's source. One (or a `&self`) → elided.
+//    Two or more with a borrowed return → you annotate. Owned return (`-> String`) → never.
+// Q: Is elision "magic" or just a shorthand?
+// A: Pure shorthand — the compiler expands it to the fully-annotated form. `first_word`
+//    literally becomes `fn first_word<'a>(s: &'a str) -> &'a str`. Nothing is inferred at
+//    runtime.

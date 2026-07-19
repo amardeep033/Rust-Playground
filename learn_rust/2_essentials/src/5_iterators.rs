@@ -1,31 +1,33 @@
-// Q: Iterators are "lazy" — what does that mean in practice? Build a pipeline that
-//    keeps evens, doubles them, and collects.
+// Q: Predict what this prints:  `(1..=3).map(|x| println!("side effect {x}"));`
+//    Three lines? Zero lines?
 
 fn main() {
-    let nums = vec![1, 2, 3, 4, 5, 6];
+    (1..=3).map(|x| println!("side effect {x}")); // ← prints NOTHING (and warns: unused iterator)
 
-    let evens_doubled: Vec<i32> =
-        nums.iter().filter(|&&x| x % 2 == 0).map(|&x| x * 2).collect();
-    println!("{evens_doubled:?}");
+    // Add a consumer and it runs:
+    (1..=3).for_each(|x| println!("with for_each {x}")); // prints 1,2,3
 
-    let raw = ["1", "two", "3", "x", "5"];
-    let parsed: Vec<i32> = raw.iter().filter_map(|s| s.parse().ok()).collect();
-    println!("{parsed:?}");
+    // Real pipeline — still lazy until `collect` pulls it:
+    let evens_doubled: Vec<i32> = (1..=6)
+        .filter(|x| x % 2 == 0)
+        .map(|x| x * 2)
+        .collect(); // ← THIS is what actually drives the chain
+    println!("{evens_doubled:?}"); // [4, 8, 12]
 
-    let picked: Vec<i32> = (10..).skip(2).take(3).collect();
-    println!("{picked:?}");
+    // filter_map = transform + drop-invalid in one pass
+    let parsed: Vec<i32> = ["1", "two", "3"].iter().filter_map(|s| s.parse().ok()).collect();
+    println!("{parsed:?}"); // [1, 3]
 }
 
-// A: Adapters (map/filter/filter_map/take/skip) build a pipeline but do NOTHING
-//    until a consumer (collect/sum/count/for) pulls values through it — which is why
-//    `(10..)` can be an infinite range yet `.skip(2).take(3)` is fine.
+// A: The `.map(...)` line prints NOTHING. Iterator adapters (map/filter/…) are LAZY — they
+//    build a recipe and do zero work until a CONSUMER (for/collect/sum/count/for_each)
+//    pulls values through. This is the classic "my map didn't run" bug. `.collect()`,
+//    `.for_each()`, or a `for` loop are what actually execute the chain.
 //
 // ── more Q&A ──
-// Q: filter_map vs filter then map?
-// A: filter_map does transform-and-drop-invalid in ONE pass: the closure returns
-//    Option, and None values are dropped (great for skipping bad rows via `.ok()`).
-// Q: What actually drives an iterator to run?
-// A: A consuming/terminal method — collect, sum, count, for, fold. Adapters alone are lazy.
-// Q: fold vs reduce?
-// A: fold takes an explicit initial accumulator; reduce uses the first element as the
-//    seed and returns Option (None on an empty iterator).
+// Q: How do I know a method is a lazy adapter vs an eager consumer?
+// A: Adapters return another iterator (map, filter, take, zip); consumers return a value or
+//    `()` (collect, sum, count, for_each, find, any). If it returns an iterator, nothing ran yet.
+// Q: filter_map vs filter().map() — why prefer it?
+// A: `filter_map` does "convert, and skip the ones that fail" in a single pass (the closure
+//    returns `Option`, `None`s are dropped) — perfect for "parse these lines, ignore bad rows".

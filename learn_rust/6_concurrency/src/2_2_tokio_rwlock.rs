@@ -1,44 +1,36 @@
-// Q: Inside async code, why use tokio::sync::RwLock instead of std's RwLock?
+// Q: Predict — inside async code, what goes wrong if you use `std::sync::RwLock` and hold it
+//    across an `.await`? Why does `tokio::sync::RwLock` exist?
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug)]
-struct Msg {
-    id: i32,
-    name: String,
-}
-
 #[tokio::main]
 async fn main() {
-    let list = Arc::new(RwLock::new(vec![
-        Msg { id: 1, name: "Amar".into() },
-        Msg { id: 2, name: "Deep".into() },
-    ]));
+    let data = Arc::new(RwLock::new(vec![1, 2, 3]));
 
-    let a = list.clone();
-    let h1 = tokio::spawn(async move {
-        println!("{:?}", a.read().await[0]);
-        a.write().await[0].id = 3;
+    let a = data.clone();
+    let h = tokio::spawn(async move {
+        {
+            let r = a.read().await; // .await the lock — suspends the TASK, not the thread
+            println!("read {:?}", *r);
+        }
+        a.write().await.push(4);
     });
 
-    let b = list.clone();
-    let h2 = tokio::spawn(async move {
-        println!("{:?}", b.read().await[1]);
-        b.write().await[1].id = 4;
-    });
-
-    h1.await.unwrap();
-    h2.await.unwrap();
+    h.await.unwrap();
+    println!("{:?}", *data.read().await);
 }
 
-// A: Its read()/write() are async and `.await` the lock instead of blocking the OS
-//    thread. A std lock parks the whole executor thread while it waits, which can stall
-//    every other task sharing that thread (and risks deadlock if held across an `.await`).
+// A: A std lock BLOCKS the OS thread while it waits. In async, many tasks share a few worker
+//    threads — so a blocked thread freezes every other task on it, and if you hold a std guard
+//    across `.await` you can deadlock the runtime. `tokio::sync::RwLock`'s `.read()/.write()`
+//    are async: they SUSPEND the task and free the thread for others. Same many-readers-or-one-
+//    writer semantics, but await-friendly.
 //
 // ── more Q&A ──
-// Q: What does `.await` on the lock actually do?
-// A: Suspends THIS task (frees the thread for other tasks) until the lock is available,
-//    rather than blocking the thread.
-// Q: Is the reader/writer semantics different from std RwLock?
-// A: No — many readers OR one writer, same as std; only the waiting mechanism is async.
+// Q: So is std::sync::Mutex/RwLock ever OK in async code?
+// A: Yes — if you lock, touch the data, and unlock WITHOUT awaiting in between, a std lock is
+//    faster and fine. The rule is only: never hold a std guard across an `.await`.
+// Q: What does `.await` on the lock actually do while waiting?
+// A: Returns control to the executor so it can poll other tasks; your task resumes once the
+//    lock is free. The thread is never parked.

@@ -1,37 +1,38 @@
-// Q: Why can't a function return `&String` to a local, and why can't you move a
-//    value while it's borrowed?
+// Q: Predict — `make_ref` and `make_owned` look almost identical. One compiles, one
+//    doesn't. Which, and why?
 
-fn make() -> String {
-    let s = String::from("hello");
-    s
-}
-
-// fn bad() -> &String {
+// fn make_ref() -> &String {
 //     let s = String::from("hello");
-//     &s // E0515: returns a reference to data owned by this function
-// }
+//     &s // ❌ E0106: "missing lifetime — there's nothing for the return to borrow from"
+// }        //    (s is a local; it would be dropped, so the return can't borrow anything valid)
+
+fn make_owned() -> String {
+    let s = String::from("hello");
+    s // ✅ ownership MOVES out to the caller — nothing is dropped
+}
 
 fn main() {
     let a = String::from("hello");
     let r = &a;
-    println!("{r}");
-    let b = a;
+    println!("{r}"); // r's last use → borrow ends
+    let b = a; // ✅ move is fine now
     println!("{b}");
+    // If `println!("{r}")` came AFTER `let b = a;` → ❌ E0505: can't move `a` while borrowed
 
-    println!("{}", make());
+    println!("{}", make_owned());
 }
 
-// A: A reference must never outlive the data it points to. A local is dropped when
-//    the function returns, so returning `&local` would dangle — return the owned
-//    String instead. Likewise moving `a` while `r` still borrows it would leave `r`
-//    dangling (E0505); it's allowed here only because `r`'s last use (NLL) is before
-//    the move.
+// A: `make_ref` fails: `s` is a local, dropped the instant the function returns, so `&s`
+//    would dangle. `make_owned` returns the value itself — ownership transfers to the
+//    caller, so there's nothing to dangle. The fix for "can't return a reference" is
+//    almost always "return the owned value".
 //
 // ── more Q&A ──
-// Q: What's the difference between a dangling pointer and a use-after-free?
-// A: A dangling pointer is an invalid reference that EXISTS (a state); use-after-free
-//    is DEREFERENCING it (an action). Every use-after-free involves a dangling
-//    pointer, but a dangling pointer isn't a bug until it's used.
-// Q: How can a function return borrowed data safely?
-// A: The caller owns the data and lends a reference in (with a lifetime tying output
-//    to input), or the function returns owned data (String).
+// Q: But real functions DO return `&str`/`&T` all the time — how, if not from a local?
+// A: They return a reference derived from an INPUT (`fn first(v: &[i32]) -> &i32`). The
+//    caller owns the data and lent it in; the output borrow ties to that input's lifetime,
+//    so it can't outlive it. You never return a ref to something the function itself owns.
+// Q: Dangling pointer vs use-after-free — same thing?
+// A: Related, not identical. A dangling pointer is an invalid reference that EXISTS (a
+//    state); use-after-free is DEREFERENCING it (an action). Rust kills the bug at the
+//    first stage — the dangling ref never even compiles.

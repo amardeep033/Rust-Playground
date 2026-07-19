@@ -1,4 +1,5 @@
-// Q: Count how many times each word appears — without doing two lookups per key.
+// Q: Predict — to count word frequencies, why can't you just write `counts[w] += 1`?
+//    What does `entry(w).or_insert(0)` do that indexing can't?
 
 use std::collections::HashMap;
 
@@ -7,26 +8,26 @@ fn main() {
 
     let mut counts: HashMap<&str, u32> = HashMap::new();
     for w in words {
-        *counts.entry(w).or_insert(0) += 1;
+        // counts[w] += 1;              // ❌ won't compile — HashMap has no IndexMut, and the key may be absent
+        *counts.entry(w).or_insert(0) += 1; // ✅ insert 0 if missing, hand back &mut, then increment
     }
-    println!("{counts:?}");
+    println!("{counts:?}"); // {"apple": 3, ...}
 
-    let mut scores: HashMap<&str, i32> = HashMap::new();
-    for name in ["a", "b", "a"] {
-        scores.entry(name).and_modify(|s| *s += 10).or_insert(1);
-    }
-    println!("{scores:?}");
+    // Reading a missing key:
+    // println!("{}", counts["grape"]);        // ❌ PANICS — key not found
+    println!("{}", counts.get("grape").copied().unwrap_or(0)); // ✅ 0
 }
 
-// A: `entry(k).or_insert(0)` returns a &mut to the value, inserting the default only
-//    when the key is absent — one lookup for get-or-create, then `*.. += 1`. When the
-//    update differs from the initial value, use `.and_modify(..).or_insert(default)`.
+// A: `counts[w] += 1` doesn't compile: HashMap intentionally has no mutable indexing, and
+//    even reading a missing key with `counts["grape"]` PANICS. `entry(w).or_insert(0)`
+//    handles the "maybe absent" case in ONE lookup — insert the default if missing, then
+//    return a `&mut` you can update. It's the idiom precisely because indexing is unsafe here.
 //
 // ── more Q&A ──
-// Q: or_insert vs or_insert_with?
-// A: or_insert takes an already-built value; or_insert_with takes a closure and only
-//    builds the default when needed — cheaper if the default allocates.
-// Q: Is HashMap iteration ordered?
-// A: No, order is arbitrary. Use BTreeMap when you need keys in sorted order.
-// Q: What does get() return?
-// A: Option<&V> — None if the key is absent, so no panic.
+// Q: or_insert vs or_insert_with — when does the difference matter?
+// A: `or_insert(expensive())` builds the default EVERY call even when the key exists.
+//    `or_insert_with(|| expensive())` only builds it when actually inserting — use it if
+//    the default allocates or computes.
+// Q: You iterate the map and the order changes each run — bug?
+// A: No — HashMap order is intentionally randomized (DoS resistance). Need sorted/stable
+//    order? Use `BTreeMap`, or collect keys into a Vec and `sort()`.

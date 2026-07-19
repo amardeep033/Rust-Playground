@@ -1,44 +1,36 @@
-// Q: How does tokio's mpsc differ from std's channel?
+// Q: A fast producer feeds a slow consumer through `mpsc::channel(2)`. Predict — what does
+//    the producer's `tx.send(...).await` do once 2 items are sitting unconsumed?
 
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
-    let (tx, mut rx) = mpsc::channel::<Vec<i32>>(2);
+    let (tx, mut rx) = mpsc::channel::<i32>(2); // capacity 2 = bounded
 
-    let items = vec![1, 2, 3, 4, 5];
-    let producers = 2;
-    let chunk = items.len().div_ceil(producers);
-    let mut iter = items.into_iter();
-    let mut handles = vec![];
-
-    for _ in 0..producers {
-        let batch: Vec<_> = iter.by_ref().take(chunk).collect();
-        if batch.is_empty() {
-            break;
+    let producer = tokio::spawn(async move {
+        for i in 1..=5 {
+            tx.send(i).await.unwrap(); // BLOCKS (suspends) here when the buffer is full
+            println!("sent {i}");
         }
-        let tx = tx.clone();
-        handles.push(tokio::spawn(async move { tx.send(batch).await.unwrap() }));
-    }
-    drop(tx);
+    });
 
-    while let Some(batch) = rx.recv().await {
-        println!("{batch:?}");
+    while let Some(v) = rx.recv().await {
+        println!("  got {v}");
+        tokio::time::sleep(Duration::from_millis(20)).await; // slow consumer
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    producer.await.unwrap();
 }
 
-// A: It's async and BOUNDED: the capacity is fixed at creation, and send().await
-//    suspends the producer when the buffer is full (backpressure) rather than blocking a
-//    thread. recv().await yields until a message arrives, ending once all senders drop —
-//    so `drop(tx)` is still required, same as std.
+// A: `send().await` SUSPENDS the producer once the 2-slot buffer is full, resuming only after
+//    the consumer drains a slot. That's backpressure — the channel automatically paces the
+//    producer to the consumer's speed. (std's `channel()` is unbounded and can't do this;
+//    that's the key difference from tokio's bounded, async channel.)
 //
 // ── more Q&A ──
-// Q: What is backpressure, and how does this channel provide it?
-// A: Slowing producers to match a slow consumer. A bounded channel does it automatically:
-//    once the buffer is full, send().await blocks until the consumer frees a slot.
-// Q: When does the `while let Some(..) = rx.recv().await` loop end?
-// A: When every sender (all tx clones AND the original) has been dropped — recv() then
-//    returns None.
+// Q: What capacity should the channel be — how do you decide?
+// A: No magic number; size it to tolerable in-flight work. Small (1–few) = tight pacing, low
+//    memory. Larger = absorbs bursts but hides a slow consumer and uses more memory. Start
+//    small; raise only if the producer stalls on natural bursts. Roughly: peak burst size.
+// Q: When does the `rx.recv().await` loop end?
+// A: When ALL senders (every `tx` clone) are dropped — then `recv()` returns `None`.

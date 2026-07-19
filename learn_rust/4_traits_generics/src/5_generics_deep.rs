@@ -1,5 +1,5 @@
-// Q: How do you gate a generic's methods by bounds, use a where clause, and
-//    implement a trait for ALL types meeting a bound (blanket impl)?
+// Q: Predict — `Pair<i32>` can call `.larger()`, but `Pair<SomeType>` can't. What decides
+//    whether the method even exists?
 
 use std::fmt::Display;
 
@@ -8,6 +8,7 @@ struct Pair<T> {
     b: T,
 }
 
+// method exists ONLY for T that are Display + PartialOrd
 impl<T: Display + PartialOrd> Pair<T> {
     fn larger(&self) {
         if self.a >= self.b {
@@ -18,13 +19,7 @@ impl<T: Display + PartialOrd> Pair<T> {
     }
 }
 
-fn show<T>(x: T)
-where
-    T: Display,
-{
-    println!("{x}");
-}
-
+// blanket impl: give EVERY Display type a `.loud()`
 trait Loud {
     fn loud(&self) -> String;
 }
@@ -34,6 +29,7 @@ impl<T: Display> Loud for T {
     }
 }
 
+// supertrait: Named requires Display too
 trait Named: Display {
     fn label(&self) -> String {
         format!("name={self}")
@@ -42,21 +38,22 @@ trait Named: Display {
 impl Named for i32 {}
 
 fn main() {
-    Pair { a: 3, b: 7 }.larger();
-    show("hi");
-    println!("{}", 42.loud()); // blanket impl → works on i32
-    println!("{}", 42.label()); // supertrait method
+    Pair { a: 3, b: 7 }.larger(); // ✅ i32 is Display + PartialOrd
+    // Pair { a: vec![1], b: vec![2] }.larger(); // ❌ Vec isn't Display → method doesn't exist
+    println!("{}", 42.loud()); // ✅ blanket impl reached i32 via Display
+    println!("{}", 42.label()); // ✅ supertrait method
 }
 
-// A: Put bounds on the impl block (`impl<T: Display + PartialOrd>`) to gate methods to
-//    qualifying types; a `where` clause is the same thing, tidier for many bounds. A
-//    blanket impl (`impl<T: Display> Loud for T`) implements a trait for every type
-//    meeting the bound.
+// A: The bound on the `impl` block decides. `impl<T: Display + PartialOrd> Pair<T>` means
+//    `.larger()` EXISTS only for T meeting those bounds — for `Pair<Vec<i32>>` the method
+//    simply isn't there (Vec isn't Display), and you get "method not found", not a body
+//    error. Bounds gate capability per concrete type; this is how one generic type can
+//    expose different methods to different T.
 //
 // ── more Q&A ──
-// Q: What is a supertrait?
-// A: `trait Named: Display` — implementors of Named must also implement Display, and
-//    Named's methods may rely on Display.
-// Q: Real-world blanket impl example?
-// A: std's `impl<T: Display> ToString for T` — every Display type gets `.to_string()`
-//    for free.
+// Q: What's a real blanket impl you use every day?
+// A: `impl<T: Display> ToString for T` in std — that's why every Display type has
+//    `.to_string()`. Our `Loud` is the same pattern.
+// Q: What does a supertrait (`trait Named: Display`) buy you?
+// A: It lets `Named`'s methods rely on Display being present, and forces implementors to
+//    provide Display too — a way to say "you can't be Named unless you're also Display".

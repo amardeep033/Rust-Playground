@@ -1,35 +1,35 @@
-// Q: Is a future doing work before you `.await` it? And why is std::thread::sleep bad
-//    inside async?
+// Q: Predict — `let fut = fetch(1);` (no `.await`). Has the sleep/work inside `fetch`
+//    started running yet? And why is `std::thread::sleep` a bug inside an async fn?
 
 use std::time::Duration;
 
 async fn fetch(id: u32) -> String {
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await; // async sleep: suspends the TASK
     format!("data-{id}")
 }
 
 #[tokio::main]
 async fn main() {
-    println!("{}", fetch(1).await);
+    let fut = fetch(1); // nothing has run yet — a Future is inert
+    println!("built the future, still nothing happened");
+    println!("{}", fut.await); // NOW it runs to completion
 
-    let heavy = tokio::task::spawn_blocking(|| (1..=1_000_000u64).sum::<u64>())
+    // std::thread::sleep(Duration::from_secs(1)); // ❌ would freeze the whole executor thread
+    let heavy = tokio::task::spawn_blocking(|| (1..=1_000_000u64).sum::<u64>()) // CPU work off the async pool
         .await
         .unwrap();
     println!("{heavy}");
 }
 
-// A: No — an `async fn` returns a LAZY future that does nothing until polled by `.await`
-//    (or tokio::spawn). `.await` suspends THIS task and lets the executor run others; it
-//    is not a new thread. std::thread::sleep (or any blocking/CPU call) parks the whole
-//    executor thread, freezing every task on it.
+// A: Nothing has run — an `async fn` returns a LAZY Future that does zero work until it's
+//    polled by `.await` (or a spawn). It is NOT a thread. `std::thread::sleep` (or any blocking/
+//    CPU-bound call) PARKS the executor's worker thread, freezing every other task scheduled on
+//    it. Use `tokio::time::sleep` for waits and `spawn_blocking` for CPU-heavy work.
 //
 // ── more Q&A ──
-// Q: Does async create threads?
-// A: No. A future is a state machine; the runtime polls many futures on a small pool of
-//    worker threads. New threads only appear via thread::spawn or spawn_blocking.
-// Q: What does `.await` actually do?
-// A: Polls the future; if it's not ready it SUSPENDS the task and yields the thread to
-//    the executor, resuming when the future can make progress.
-// Q: Where does CPU-heavy work belong?
-// A: In spawn_blocking (a dedicated blocking pool) or a real thread — never inline in an
-//    async task, or it starves the executor.
+// Q: If futures don't run until awaited, how do multiple things run "concurrently"?
+// A: A future is a state machine the executor POLLS. `.await` yields at each suspension point,
+//    so the executor interleaves many futures on one thread — concurrency without extra threads.
+// Q: Where does genuinely CPU-heavy work belong?
+// A: `spawn_blocking` (a dedicated blocking thread pool) or a real thread. Never inline in an
+//    async task, or it starves the executor and stalls unrelated I/O tasks.

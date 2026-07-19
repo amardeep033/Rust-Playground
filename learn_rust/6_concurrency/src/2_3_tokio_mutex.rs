@@ -1,43 +1,37 @@
-// Q: When do you actually need an async Mutex (tokio::sync::Mutex)?
+// Q: Predict — is `tokio::sync::Mutex` always the right choice in async code, or only
+//    sometimes? When would `std::sync::Mutex` still be better even inside async?
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Debug)]
-struct Msg {
-    id: i32,
-    name: String,
-}
-
 #[tokio::main]
 async fn main() {
-    let list = Arc::new(Mutex::new(vec![
-        Msg { id: 1, name: "Amar".into() },
-        Msg { id: 2, name: "Deep".into() },
-    ]));
+    let data = Arc::new(Mutex::new(0));
 
-    let a = list.clone();
-    let h1 = tokio::spawn(async move {
-        a.lock().await[0].id = 3;
-    });
-
-    let b = list.clone();
-    let h2 = tokio::spawn(async move {
-        b.lock().await[1].id = 4;
-    });
-
-    h1.await.unwrap();
-    h2.await.unwrap();
-    println!("{:?}", list.lock().await);
+    let mut handles = vec![];
+    for _ in 0..3 {
+        let d = data.clone();
+        handles.push(tokio::spawn(async move {
+            let mut g = d.lock().await; // async lock — yields the thread while waiting
+            *g += 1;
+        }));
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+    println!("{}", *data.lock().await); // 3
 }
 
-// A: Only when you must hold the lock ACROSS an `.await` point — the async Mutex yields
-//    the thread while waiting instead of blocking it.
+// A: Only SOMETIMES. Use `tokio::sync::Mutex` when you must hold the lock ACROSS an `.await`
+//    (e.g. an async DB call while holding it) — it suspends the task instead of blocking the
+//    thread. But if you just lock, mutate, and unlock with NO await in between, `std::sync::
+//    Mutex` is faster and perfectly fine even in async. Reaching for the async Mutex reflexively
+//    is a common over-correction.
 //
 // ── more Q&A ──
-// Q: If you don't await while holding the lock, which Mutex should you use?
-// A: The plain std::sync::Mutex — it's faster, and holding it briefly (no await inside)
-//    is fine even in async code.
-// Q: Why is holding a std Mutex across `.await` dangerous?
-// A: The guard blocks the OS thread; if the task is parked there, other tasks on that
-//    thread stall, and you can deadlock the runtime.
+// Q: Why is holding a std Mutex guard across `.await` dangerous?
+// A: The guard blocks the worker thread; if your task parks there mid-await, other tasks on
+//    that thread stall, and lock-ordering across suspended tasks can deadlock the runtime.
+// Q: The async Mutex is "slower" — so why ever use it?
+// A: Because blocking a worker thread is far worse than a slightly heavier lock. Correctness
+//    (not starving the executor) beats the micro-cost when you genuinely await under the lock.

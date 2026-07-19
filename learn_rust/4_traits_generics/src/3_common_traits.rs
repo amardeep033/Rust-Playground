@@ -1,4 +1,4 @@
-// Q: How do you get {:?} vs {} printing, and how do From/Into conversions work?
+// Q: Predict — with `#[derive(Debug)]` on Point, which line fails: `{p:?}` or `{p}`?
 
 use std::fmt;
 
@@ -8,6 +8,7 @@ struct Point {
     y: i32,
 }
 
+// Display must be written by hand — it is NOT derivable
 impl fmt::Display for Point {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "({}, {})", self.x, self.y)
@@ -23,23 +24,23 @@ impl From<f64> for Meters {
 
 fn main() {
     let p = Point { x: 1, y: 2 };
-    println!("{p:?}"); // Debug (derived)
-    println!("{p}"); // Display (hand-written)
-    println!("{}", p.clone() == p); // Clone + PartialEq (derived)
+    println!("{p:?}"); // ✅ Debug — derived
+    println!("{p}"); // ✅ only because we hand-wrote Display; ❌ E0277 without that impl
+    println!("{}", p.clone() == p); // ✅ Clone + PartialEq — derived
 
-    let m: Meters = 5.0.into(); // Into, auto-derived from From
-    let m2 = Meters::from(9.0);
-    println!("{} {}", m.0, m2.0);
+    let m: Meters = 5.0.into(); // Into came free from `impl From`
+    println!("{}", m.0);
 }
 
-// A: `#[derive(Debug)]` gives `{:?}`; Display (`{}`) must be implemented by hand via
-//    fmt::Display. Implement `From<T>` and you get `Into` for free.
+// A: `{p}` (Display) is the one that would fail — `#[derive(Debug)]` only gives you `{:?}`.
+//    Display can NOT be derived; you must implement `fmt::Display` yourself (as above). The
+//    split is deliberate: Debug is for developers (`{:?}`), Display is a human-facing choice
+//    only you can make. Forgetting this and reaching for `{}` on a struct is a classic E0277.
 //
 // ── more Q&A ──
-// Q: Which common traits are derivable, and which is NOT?
-// A: Derivable: Debug, Clone, PartialEq/Eq, Hash, Default, PartialOrd/Ord. Display is
-//    NOT derivable — you always write it.
-// Q: From or Into — which do you implement?
-// A: Implement From; Into comes free via a blanket impl. Prefer From bounds in APIs.
-// Q: How does `?` convert one error type into another?
-// A: It calls `.into()`, which uses your `From` impl to convert the source error.
+// Q: Which common traits ARE derivable?
+// A: Debug, Clone, Copy, PartialEq/Eq, Hash, Default, PartialOrd/Ord. Display and most
+//    behaviour traits are not — derive covers the "mechanical" ones.
+// Q: Why implement `From` and never `Into`?
+// A: A blanket impl gives you `Into` for free whenever you impl `From`. So write `From`,
+//    get both. Bonus: `?` uses this `From` to convert an error into your function's error type.

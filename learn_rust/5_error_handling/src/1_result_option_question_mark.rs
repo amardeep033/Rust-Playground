@@ -1,40 +1,37 @@
-// Q: Does `?` only work on Result? What does `?` desugar to?
+// Q: Predict — does `?` work only on `Result`? And what must the enclosing function
+//    return for `?` to be legal?
 
 fn parse_and_double(s: &str) -> Result<i32, std::num::ParseIntError> {
-    let n: i32 = s.parse()?;
+    let n: i32 = s.parse()?; // ? on Result: Err → early return
     Ok(n * 2)
 }
 
 fn first_char_upper(s: &str) -> Option<char> {
-    let c = s.chars().next()?;
+    let c = s.chars().next()?; // ? on OPTION: None → early return (surprises people)
     Some(c.to_ascii_uppercase())
 }
 
 fn main() {
-    println!("{:?}", parse_and_double("21"));
-    println!("{:?}", parse_and_double("oops"));
-    println!("{:?}", first_char_upper("hello"));
-    println!("{:?}", first_char_upper(""));
+    // fn main() { std::fs::read_to_string("x")?; } // ❌ E0277: main returns (), not Result/Option
+    println!("{:?}", parse_and_double("21")); // Ok(42)
+    println!("{:?}", parse_and_double("oops")); // Err(..)
+    println!("{:?}", first_char_upper("hi")); // Some('H')
+    println!("{:?}", first_char_upper("")); // None
 
     let name: Option<&str> = Some("amar");
-    if let Some(n) = name {
-        println!("hi {n}");
-    }
-    let long = name.and_then(|n| (n.len() > 3).then(|| n.to_uppercase()));
-    println!("and_then: {long:?}");
+    println!("{:?}", name.and_then(|n| (n.len() > 3).then(|| n.to_uppercase()))); // Some("AMAR")
+    println!("{}", "notnum".parse::<i32>().unwrap_or(-1)); // -1
 }
 
-// A: `?` works on Option too, not just Result — the enclosing fn must return the
-//    matching type. On Result it desugars to
-//    `match expr { Ok(v) => v, Err(e) => return Err(e.into()) }` (note `.into()`, so
-//    the error is converted via From). On Option, None short-circuits to `return None`.
+// A: `?` works on `Option` too — that's the common blind spot. What it needs is that the
+//    ENCLOSING function returns the matching type (Result for a Result `?`, Option for an
+//    Option `?`). On Result it desugars to `match { Ok(v)=>v, Err(e)=>return Err(e.into()) }`
+//    — note `.into()`, which converts the error via `From` (how libraries unify error types).
 //
 // ── more Q&A ──
-// Q: What must a function return to use `?`?
-// A: A Result (for `?` on Result) or an Option (for `?` on Option) — including
-//    `fn main() -> Result<(), E>`.
-// Q: Common Option combinators?
-// A: map (transform Some), and_then (chain another Option), unwrap_or / _else / _default
-//    (fallback), ok_or (→ Result), plus `if let Some(x)`.
-// Q: How do you turn a Result into an Option?
-// A: `res.ok()` — keeps Ok(v) as Some(v) and DROPS the error as None.
+// Q: Why does `?` in `main` often fail to compile?
+// A: Default `main` returns `()`, and `?` needs a Result/Option return. Change it to
+//    `fn main() -> Result<(), Box<dyn Error>>` and `?` becomes legal in main.
+// Q: match vs combinators — when each?
+// A: `match`/`if let` when branches differ a lot or you handle both. Combinators
+//    (`map`/`and_then`/`unwrap_or`/`ok_or`) for short linear transforms — less noise, same result.
