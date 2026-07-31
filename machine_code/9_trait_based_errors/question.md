@@ -6,16 +6,17 @@
 
 ## Problem Statement
 
-Build a small Rust library that receives JSON input representing different API commands, validates the input, executes the corresponding domain operation, and returns a structured response.
+Build a small Rust library that receives JSON input representing different API commands, validates the input, and returns a structured JSON response.
+
+The goal is to practice Rust error modeling and trait usage with more breadth than business-logic depth.
 
 The system must distinguish between:
 
-* JSON parsing errors
+* JSON parsing/type errors
 * Invalid or missing input fields
 * Unsupported command types
-* Domain/business-rule errors
 
-Your design should use Rust traits to separate JSON-level behavior, domain behavior, and error presentation.
+Your design should use Rust traits to separate JSON-level behavior and error presentation.
 
 ---
 
@@ -54,57 +55,58 @@ The application receives JSON strings representing account operations.
 }
 ```
 
+The processor may accept either one command object or an array of command objects.
+
 ---
 
 ## Functional Requirements
 
-### 1. Parse JSON commands
+### 1. Parse JSON Commands
 
 Create a function similar to:
 
 ```rust
 fn process_json(
     input: &str,
-    service: &dyn AccountService,
     error_renderer: &dyn ErrorRenderer,
 ) -> String
 ```
 
-The function must parse the JSON, execute the requested operation, and return a JSON response.
+The function must parse the JSON, validate the requested command, and return a JSON response.
+
+No account balances need to be stored or updated. Once a command is valid, return an acknowledgement response.
 
 ---
 
-### 2. Support multiple error categories
+### 2. Support Multiple Error Categories
 
 At minimum, support the following errors.
 
-#### JSON errors
+#### JSON Errors
 
 Examples:
 
 * Malformed JSON
 * Incorrect JSON field type
-* Missing required fields
 
-#### Request errors
+#### Request/Validation Errors
+
+Examples:
+
+* Missing required field
+* Empty account ID
+* Empty owner for account creation
+* Zero or negative transaction amount
+
+#### Command Errors
 
 Examples:
 
 * Unsupported `"type"` value
-* Empty account ID
-* Zero or negative transaction amount
-
-#### Domain errors
-
-Examples:
-
-* Account already exists
-* Account not found
-* Insufficient balance
 
 ---
 
-### 3. Local trait implemented for an external type
+### 3. Local Trait Implemented for an External Type
 
 Define a local trait that adds application-specific behavior to an external JSON-related type.
 
@@ -127,15 +129,15 @@ The implementation should convert a `serde_json::Error` into an application-spec
 
 ---
 
-### 4. External trait implemented for a local type
+### 4. External Trait Implemented for a Local Type
 
 Create a local application error type:
 
 ```rust
 enum AppError {
     Json(...),
-    InvalidRequest(...),
-    Domain(...),
+    Validation(...),
+    UnsupportedCommand(...),
 }
 ```
 
@@ -156,7 +158,38 @@ println!("{error}");
 
 ---
 
-### 5. Config-driven API behavior
+### 5. Use `thiserror` and `#[from]`
+
+Use the `thiserror` crate to derive `std::error::Error` for your local error type.
+
+At minimum:
+
+* Add `thiserror` to `Cargo.toml`.
+* Use `#[derive(Debug, thiserror::Error)]` on `AppError`.
+* Use `#[from]` on the JSON error variant so `serde_json::Error` can be converted into `AppError` automatically.
+* Use the `?` operator with `serde_json` parsing calls so the `#[from]` conversion is exercised.
+
+Example shape:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+enum AppError {
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Validation error: {message}")]
+    Validation {
+        code: &'static str,
+        message: String,
+    },
+}
+```
+
+You may still use your local `JsonErrorDetails` trait for rendering JSON error codes/messages.
+
+---
+
+### 6. Config-Driven Error Rendering
 
 The API must support configurable error-response styles.
 
@@ -170,7 +203,7 @@ trait ErrorRenderer {
 
 Provide at least two implementations.
 
-#### Detailed renderer
+#### Detailed Renderer
 
 Example response:
 
@@ -178,14 +211,14 @@ Example response:
 {
   "success": false,
   "error": {
-    "code": "INSUFFICIENT_BALANCE",
-    "message": "Account ACC-101 does not have enough balance",
-    "category": "domain"
+    "code": "INVALID_AMOUNT",
+    "message": "amount must be greater than zero for deposit",
+    "category": "validation"
   }
 }
 ```
 
-#### Minimal renderer
+#### Minimal Renderer
 
 Example response:
 
@@ -215,60 +248,30 @@ The main JSON-processing function should not contain renderer-specific condition
 
 ---
 
-## Domain Interface
-
-Define an account-service trait:
-
-```rust
-trait AccountService {
-    fn create_account(
-        &self,
-        account_id: &str,
-        owner: &str,
-        initial_balance: i64,
-    ) -> Result<(), DomainError>;
-
-    fn deposit(
-        &self,
-        account_id: &str,
-        amount: i64,
-    ) -> Result<i64, DomainError>;
-
-    fn withdraw(
-        &self,
-        account_id: &str,
-        amount: i64,
-    ) -> Result<i64, DomainError>;
-}
-```
-
-Implement an in-memory version using a suitable collection such as:
-
-```rust
-HashMap<String, Account>
-```
-
-The returned balance from `deposit` and `withdraw` should represent the updated account balance.
-
----
-
 ## Successful Responses
 
-### Account created
+### Single Command Accepted
 
 ```json
 {
   "success": true,
-  "message": "Account created"
+  "message": "Command accepted",
+  "command": "deposit"
 }
 ```
 
-### Deposit or withdrawal completed
+### Multiple Commands Accepted
 
 ```json
 {
   "success": true,
-  "balance": 400
+  "results": [
+    {
+      "success": true,
+      "message": "Command accepted",
+      "command": "create_account"
+    }
+  ]
 }
 ```
 
@@ -288,12 +291,13 @@ Input:
 
 Expected result:
 
-* Convert `serde_json::Error` using the local extension trait.
+* Convert `serde_json::Error` into `AppError` via `#[from]`.
+* Use the local `JsonErrorDetails` trait while rendering.
 * Return an error using the configured renderer.
 
 ---
 
-### Unsupported command
+### Unsupported Command
 
 Input:
 
@@ -311,7 +315,7 @@ Expected result:
 
 ---
 
-### Invalid amount
+### Invalid Amount
 
 Input:
 
@@ -329,36 +333,18 @@ Expected result:
 
 ---
 
-### Insufficient balance
-
-Input:
-
-```json
-{
-  "type": "withdraw",
-  "account_id": "ACC-101",
-  "amount": 5000
-}
-```
-
-Expected result:
-
-* Return a domain error.
-* Render it according to the configured error mode.
-
----
-
 ## Design Constraints
 
 Your implementation must demonstrate all of the following:
 
 1. A local trait implemented for an external type.
 2. An external trait implemented for a local type.
-3. Runtime/config-driven behavior using trait objects.
-4. Separate JSON, validation, and domain errors.
-5. No panics for invalid user input.
-6. Meaningful use of `Result` and the `?` operator.
-7. Business logic separated from JSON-response formatting.
+3. `thiserror` with `#[from]`.
+4. Runtime/config-driven behavior using trait objects.
+5. Separate JSON, validation, and command errors.
+6. No panics for invalid user input.
+7. Meaningful use of `Result` and the `?` operator.
+8. Validation logic separated from JSON-response formatting.
 
 ---
 
@@ -367,9 +353,8 @@ Your implementation must demonstrate all of the following:
 ```text
 src/
 ├── main.rs
-├── command.rs
-├── domain.rs
-├── error.rs
+├── err.rs
+├── req.rs
 └── renderer.rs
 ```
 
@@ -381,8 +366,6 @@ A single-file implementation is also acceptable for the interview.
 
 Complete these only if time permits:
 
-* Add an error source chain using `std::error::Error::source`.
-* Use `#[from]` with the `thiserror` crate.
-* Add unit tests for malformed JSON and insufficient balance.
+* Add unit tests for malformed JSON, unsupported command, and invalid amount.
 * Add a third renderer that returns HTTP-style status codes.
 * Make `process_json` generic instead of using trait objects and explain the trade-off.

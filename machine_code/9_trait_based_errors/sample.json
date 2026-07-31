@@ -1,0 +1,16 @@
+[{
+  "type": "create_accont",
+  "account_id": "ACC-101",
+  "owner": "Alice",
+  "initial_balance": 500
+},
+{
+  "type": "withdraw",
+  "account_id": "ACC-101",
+  "amount": 200
+},
+{
+  "type": "deposit",
+  "account_id": "ACC-101",
+  "amount": 100
+}]
